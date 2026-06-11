@@ -35,6 +35,7 @@ No API key is required.
 | `GET`  | `/messages`             | List inbox messages                     |
 | `GET`  | `/messages/{id}`        | Read a message                          |
 | `GET`  | `/messages/{id}/source` | Read raw RFC 2822 message source        |
+| `DELETE`| `/accounts/{id}`        | Delete an account (cleanup)             |
 
 ## Usage Notes
 
@@ -56,22 +57,24 @@ Appropriate uses include:
 
 ```python
 import requests
+import uuid
 
 BASE = "https://api.mail.tm"
 
-# List available domains
-requests.get(f"{BASE}/domains").json()
+# List available domains and pick one
+domain = requests.get(f"{BASE}/domains").json()["hydra:member"][0]["domain"]
 
-# Create an account
-requests.post(
+# Create an account with a random local part
+local = uuid.uuid4().hex[:8]
+resp = requests.post(
     f"{BASE}/accounts",
-    json={"address": "user@web-library.net", "password": "secret"},
+    json={"address": f"{local}@{domain}", "password": "secret"},
 ).json()
 
 # Authenticate
 token = requests.post(
     f"{BASE}/token",
-    json={"address": "user@web-library.net", "password": "secret"},
+    json={"address": f"{local}@{domain}", "password": "secret"},
 ).json()["token"]
 
 # Get current account info
@@ -90,18 +93,18 @@ requests.get(f"{BASE}/messages/<id>/source", headers={"Authorization": f"Bearer 
 ### cURL
 
 ```bash
-# List available domains
+# List available domains and pick one
 curl https://api.mail.tm/domains
 
-# Create an account
+# Create an account (populate ADDRESS and PASSWORD from domain above)
 curl -X POST https://api.mail.tm/accounts \
   -H "Content-Type: application/json" \
-  -d '{"address":"user@web-library.net","password":"secret"}'
+  -d '{"address":"<random>@<domain>","password":"secret"}'
 
 # Authenticate
 curl -X POST https://api.mail.tm/token \
   -H "Content-Type: application/json" \
-  -d '{"address":"user@web-library.net","password":"secret"}'
+  -d '{"address":"<random>@<domain>","password":"secret"}'
 
 # Get current account info
 curl https://api.mail.tm/me -H "Authorization: Bearer <token>"
@@ -219,7 +222,7 @@ Same shape as `POST /accounts`.
   "subject": "Verify your email",
   "intro": "Click the link below...",
   "text": "Plain text body with verification code 123456...",
-  "html": "<html>...</html>",
+  "html": ["<html>...</html>"],
   "createdAt": "2026-01-01T00:00:00+00:00",
   "updatedAt": "2026-01-01T00:00:00+00:00"
 }
@@ -233,7 +236,7 @@ Same shape as `POST /accounts`.
   "@type": "Source",
   "data": "Received: from mail.example.com...\r\nSubject: Verify your email\r\n...",
   "downloadUrl": "https://api.mail.tm/messages/<msg_id>/source",
-  "mimeTree": { ... },
+  "mimeTree": {},
   "isDeleted": false
 }
 ```
@@ -245,7 +248,8 @@ Extract URLs from message text or HTML:
 ```python
 import re
 
-urls = re.findall(r'https?://[^\s"<>]+', message.get("text", "") + " " + message.get("html", ""))
+html = " ".join(message.get("html", [])) if isinstance(message.get("html"), list) else message.get("html", "")
+urls = re.findall(r'https?://[^\s"<>]+', message.get("text", "") + " " + html)
 ```
 
 Extract OTP-style numeric codes:
@@ -278,3 +282,4 @@ Read raw source when headers matter, including:
 * Treat mailboxes as temporary. Accounts and messages may be purged after a short period.
 * Do not rely on this inbox for long-term storage.
 * Do not use disposable inboxes for sensitive, personal, or high-security accounts unless the user explicitly accepts the risk.
+* Clean up accounts with `DELETE /accounts/{id}` after use to avoid quota exhaustion.
